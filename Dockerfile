@@ -1,25 +1,25 @@
 FROM python:3.13-slim
 
-# Cache-bust: v4
-WORKDIR /app
+WORKDIR /sentiment_app
 
 # Install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source files
+# Copy source files (dataset is embedded inside train.py)
 COPY train.py .
 COPY app.py .
 
-# Train the model at build time (MLflow logs to /app/mlruns, model saved to /app/models)
+# Train the model at build time
+# MLflow logs → /sentiment_app/mlruns
+# Trained model → /sentiment_app/models/sentiment_model.pkl
 RUN python train.py
 
-# Railway sets $PORT automatically; default 8000 for local use
+# Railway injects $PORT at runtime; fallback to 8000 locally
 ENV PORT=8000
 ENV MODEL_PATH=models/sentiment_model.pkl
 ENV MLFLOW_TRACKING_URI=mlruns
 
 EXPOSE 8000
 
-# Start FastAPI
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT}"]
