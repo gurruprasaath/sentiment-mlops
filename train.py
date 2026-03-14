@@ -1,7 +1,7 @@
 """
 Sentiment Analysis - Training Script with MLflow Tracking
-Dataset: IMDb-style movie review dataset (generated inline for self-contained demo)
-Model: TF-IDF + Logistic Regression (Scikit-learn)
+Dataset: 200+ movie reviews including negation patterns
+Model: TF-IDF (word + char n-grams) + Logistic Regression (Scikit-learn)
 """
 
 import os
@@ -18,18 +18,20 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     classification_report,
-    confusion_matrix,
 )
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline, FeatureUnion
 import joblib
 import warnings
 
 warnings.filterwarnings("ignore")
+os.environ.setdefault("GIT_PYTHON_REFRESH", "quiet")
 
 # ---------------------------------------------------------------------------
-# 1. Sample Dataset (positive & negative movie reviews)
+# 1. Dataset  — 120 positive + 120 negative = 240 reviews
+#    Includes negation patterns so the model learns "not good" = negative
 # ---------------------------------------------------------------------------
 POSITIVE_REVIEWS = [
+    # Strong positives
     "This movie was absolutely fantastic! I loved every minute of it.",
     "An incredible performance by the entire cast. Truly breathtaking.",
     "One of the best films I have ever seen. Highly recommended!",
@@ -60,9 +62,94 @@ POSITIVE_REVIEWS = [
     "The director's vision comes through in every frame.",
     "Impressive storytelling with incredible character depth.",
     "Loved every moment. A true cinematic gem.",
+    # More positives with varied vocabulary
+    "A stunning visual feast with a powerful emotional core.",
+    "The performances were outstanding and deeply moving.",
+    "I left the cinema feeling inspired and uplifted.",
+    "A rare gem that delivers on every level.",
+    "Smart, funny, and surprisingly touching.",
+    "The best film I have seen this year by far.",
+    "Perfectly paced with excellent character development.",
+    "A triumph of storytelling and visual artistry.",
+    "Endlessly entertaining with a satisfying conclusion.",
+    "The screenplay is sharp, witty, and emotionally resonant.",
+    "Remarkable cinematography and a moving score.",
+    "A crowd-pleasing adventure that never loses its heart.",
+    "Beautifully acted and written with great intelligence.",
+    "Pure cinematic joy from the opening scene to the credits.",
+    "A genuinely emotional rollercoaster in the best way.",
+    "The chemistry between the leads is absolutely electric.",
+    "A film that stays with you long after it ends.",
+    "I was completely absorbed from the very first scene.",
+    "Funny, heartfelt, and brilliantly performed.",
+    "Excellent in every department. A true crowd-pleaser.",
+    # Mild positives and nuanced positives
+    "It was a pretty good film overall, I enjoyed it.",
+    "Not perfect but genuinely enjoyable and well-made.",
+    "I liked this movie quite a bit. Worth watching.",
+    "A solid and entertaining film with good performances.",
+    "Better than expected. I had a great time watching it.",
+    "Good story, good acting, good fun. Recommended.",
+    "A decent film that is definitely worth your time.",
+    "I enjoyed this more than I thought I would. Pleasant surprise.",
+    "The movie has its flaws but is largely very enjoyable.",
+    "Fun, lighthearted, and genuinely entertaining.",
+    # Negation words but POSITIVE meaning
+    "I could not have enjoyed this film more. Truly wonderful.",
+    "Not a dull moment in the entire film. Absolutely gripping.",
+    "I was not disappointed at all. It exceeded my hopes.",
+    "There was not a single performance that felt forced.",
+    "Not your average film. This one is truly special.",
+    "I did not expect to love this so much but I absolutely did.",
+    "This was not bad at all, it was incredible!",
+    "Not just good, this film is genuinely great.",
+    "I could not stop smiling throughout the entire movie.",
+    "Not boring for even a single second. Riveting throughout.",
+    "You will not regret watching this. It is wonderful.",
+    "I have not seen acting this good in a long time.",
+    "This movie does not disappoint. It delivers on every promise.",
+    "Not a weak scene in the film. Masterfully crafted.",
+    "I cannot say enough good things about this movie.",
+    "There is not a single thing I would change about it.",
+    "I did not want it to end. That is how good it was.",
+    "Not just entertaining, it is genuinely thought-provoking.",
+    "This film never fails to make me smile every time I watch.",
+    "The story does not feel clichéd at all. Refreshingly original.",
+    # Additional positive
+    "Absolutely loved every second of this brilliant film.",
+    "A masterclass in filmmaking. Loved it completely.",
+    "The best cinematic experience I have had in years.",
+    "This film is pure joy from start to finish.",
+    "Incredible storytelling backed by superb performances.",
+    "A movie that genuinely moved me to tears of happiness.",
+    "Everything about this film works perfectly.",
+    "A delightful surprise that I will watch again and again.",
+    "Engaging, emotional, funny and beautifully shot.",
+    "This movie is a love letter to great cinema.",
+    "Warm, funny and deeply satisfying. I loved it.",
+    "A feel-good masterpiece that deserves all its praise.",
+    "The performances elevate an already great script.",
+    "Thoughtful, moving and wildly entertaining.",
+    "Simply one of the greatest films ever made.",
+    "I adored every frame of this beautiful film.",
+    "Uplifting, funny and genuinely heart-warming.",
+    "A perfect film from start to finish. Cannot fault it.",
+    "Spectacular in every way. A true achievement.",
+    "This film left me breathless and deeply moved.",
+    "Every performance is extraordinary. A joy to watch.",
+    "One of those rare films that genuinely changes you.",
+    "A beautiful story told with immense skill and heart.",
+    "I laughed, cried and cheered. A truly great film.",
+    "Brilliant on every level. Highly recommend this film.",
+    "The kind of movie you never want to end.",
+    "A cinematic triumph. Loved absolutely everything.",
+    "Superbly directed with extraordinary performances throughout.",
+    "This is what great filmmaking looks like. Loved it.",
+    "An emotional journey that is genuinely worth taking.",
 ]
 
 NEGATIVE_REVIEWS = [
+    # Strong negatives
     "Terrible movie. I wasted two hours of my life.",
     "The plot made absolutely no sense. Very disappointing.",
     "Horrible acting and a boring, predictable storyline.",
@@ -93,6 +180,84 @@ NEGATIVE_REVIEWS = [
     "A confusing, dull, and ultimately pointless experience.",
     "I was bored to tears. Not even worth streaming for free.",
     "Terrible movie that ruined a great source material.",
+    # More negatives
+    "Awful from beginning to end. Do not bother watching.",
+    "A colossal waste of time. I regret watching it.",
+    "The story made no sense and the acting was painful.",
+    "Dreadful in every possible way. Hated every minute.",
+    "Nothing about this film works. Avoid completely.",
+    "An embarrassment to cinema. Simply dreadful.",
+    "Tedious, pointless and deeply unpleasant to watch.",
+    "I hated every single scene of this horrible film.",
+    "The worst screenplay I have encountered in years.",
+    "Amateurish direction ruined what could have been decent.",
+    "A film without a single redeeming quality.",
+    "Offensive, boring and completely without merit.",
+    "I have never been so bored watching a film.",
+    "Dull, predictable and painfully long.",
+    "The film was an absolute chore to get through.",
+    "Terrible in every sense. I want my money back.",
+    "An incoherent mess that wastes everyone involved.",
+    "The acting was so bad it was hard to watch.",
+    "I genuinely hated this film. Avoid at all costs.",
+    "One of the most unpleasant cinema experiences I have had.",
+    # Negation words with NEGATIVE meaning
+    "This movie was not good at all. Deeply disappointing.",
+    "The film was not entertaining in any way whatsoever.",
+    "It was not interesting. I was bored the entire time.",
+    "The acting was not convincing. Felt completely fake.",
+    "This was not worth watching. Total waste of time.",
+    "The story did not make sense from start to finish.",
+    "I did not enjoy a single moment of this dreadful film.",
+    "The characters were not likeable or believable at all.",
+    "This movie was not what was promised. Very misleading.",
+    "It was not funny despite trying hard to be a comedy.",
+    "The plot was not engaging and I lost interest quickly.",
+    "The film did not live up to the hype at all.",
+    "I could not enjoy this movie. It was too poorly made.",
+    "The pacing was not good. Dragged on endlessly.",
+    "This was not a good film. Very disappointed.",
+    "The direction was not impressive. Amateurish at best.",
+    "I would not recommend this to anyone. Terrible.",
+    "The script was not clever. Lazy and predictable.",
+    "The ending was not satisfying. Felt completely unresolved.",
+    "This film was not worth my time or money.",
+    "Not a good movie. In fact it is quite terrible.",
+    "Not enjoyable, not interesting, not worth watching.",
+    "Not well made, not well acted and not entertaining.",
+    "Not recommended at all. A genuinely bad film.",
+    "Not one moment of this film worked for me.",
+    # Additional negatives
+    "A cinematic disaster that fails on every level.",
+    "Boring, predictable and ultimately forgettable.",
+    "I regret spending money on this terrible film.",
+    "An absolute mess of a movie. Just awful.",
+    "Hated it. One of the worst films ever made.",
+    "This film is an insult to the audience's intelligence.",
+    "A pointless exercise in tedium from start to finish.",
+    "The worst kind of lazy filmmaking. Embarrassing.",
+    "So bad that I genuinely struggled to finish it.",
+    "A joyless, humourless, and deeply boring experience.",
+    "Nothing worked. The story, acting, and direction all failed.",
+    "A thoroughly unpleasant film with nothing to recommend.",
+    "I cannot believe this got made. Absolutely dreadful.",
+    "Painful to watch. Every scene was a struggle.",
+    "The most boring film I have ever sat through.",
+    "A complete and utter failure in every department.",
+    "Wasted potential. What a disappointment this turned out to be.",
+    "I walked away feeling angry about the time I had wasted.",
+    "So dull and lifeless that I nearly fell asleep.",
+    "One of the most poorly constructed films I have seen.",
+    "The film was an ordeal. I would not wish it on anyone.",
+    "A truly terrible piece of filmmaking. Avoid completely.",
+    "No redeeming qualities whatsoever. Dreadful throughout.",
+    "The acting, writing, and direction are all genuinely bad.",
+    "A film that manages to be both dull and offensive.",
+    "I am amazed this was allowed to be released. Appalling.",
+    "Slow, confusing and deeply unsatisfying. Avoid.",
+    "An incoherent waste of film. Absolutely terrible.",
+    "This is not cinema. It is a punishment.",
+    "I genuinely despised this film. One of the worst ever.",
 ]
 
 texts = POSITIVE_REVIEWS + NEGATIVE_REVIEWS
@@ -110,11 +275,11 @@ mlflow.set_experiment(EXPERIMENT_NAME)
 
 
 def train(
-    max_features: int = 5000,
-    ngram_max: int = 2,
-    C: float = 1.0,
-    max_iter: int = 200,
-    test_size: float = 0.2,
+    max_features: int = 10000,
+    ngram_max: int = 3,
+    C: float = 2.0,
+    max_iter: int = 500,
+    test_size: float = 0.15,
 ):
     """Train and log a sentiment analysis model with MLflow."""
 
@@ -122,7 +287,7 @@ def train(
         texts, labels, test_size=test_size, random_state=42, stratify=labels
     )
 
-    with mlflow.start_run(run_name="tfidf-logreg") as run:
+    with mlflow.start_run(run_name="tfidf-word-char-logreg") as run:
         # -- Log hyper-parameters ----------------------------------------
         params = {
             "max_features": max_features,
@@ -131,20 +296,41 @@ def train(
             "max_iter": max_iter,
             "test_size": test_size,
             "solver": "lbfgs",
+            "vectorizer": "word+char TF-IDF",
+            "dataset_size": len(texts),
         }
         mlflow.log_params(params)
 
-        # -- Build pipeline -----------------------------------------------
+        # -- Build pipeline with word + char n-grams ----------------------
+        # Word n-grams capture phrases like "not good", "not worth"
+        # Char n-grams capture morphological patterns
+        word_tfidf = TfidfVectorizer(
+            max_features=max_features,
+            ngram_range=(1, ngram_max),
+            analyzer="word",
+            stop_words=None,  # Keep "not", "no", "never" — critical for negation
+            lowercase=True,
+            strip_accents="unicode",
+            sublinear_tf=True,
+        )
+
+        char_tfidf = TfidfVectorizer(
+            max_features=5000,
+            ngram_range=(3, 5),
+            analyzer="char_wb",
+            lowercase=True,
+            sublinear_tf=True,
+        )
+
         pipeline = Pipeline(
             [
                 (
-                    "tfidf",
-                    TfidfVectorizer(
-                        max_features=max_features,
-                        ngram_range=(1, ngram_max),
-                        stop_words="english",
-                        lowercase=True,
-                        strip_accents="unicode",
+                    "features",
+                    FeatureUnion(
+                        [
+                            ("word", word_tfidf),
+                            ("char", char_tfidf),
+                        ]
                     ),
                 ),
                 (
@@ -165,17 +351,20 @@ def train(
         # -- Evaluate -----------------------------------------------------
         y_pred = pipeline.predict(X_test)
         metrics = {
-            "accuracy": accuracy_score(y_test, y_pred),
-            "precision": precision_score(y_test, y_pred, zero_division=0),
-            "recall": recall_score(y_test, y_pred, zero_division=0),
-            "f1_score": f1_score(y_test, y_pred, zero_division=0),
+            "accuracy": round(accuracy_score(y_test, y_pred), 4),
+            "precision": round(precision_score(y_test, y_pred, zero_division=0), 4),
+            "recall": round(recall_score(y_test, y_pred, zero_division=0), 4),
+            "f1_score": round(f1_score(y_test, y_pred, zero_division=0), 4),
         }
         mlflow.log_metrics(metrics)
 
         print("\n" + "=" * 55)
         print("  SENTIMENT ANALYSIS MODEL - TRAINING COMPLETE")
         print("=" * 55)
-        print(f"  Run ID : {run.info.run_id}")
+        print(f"  Run ID    : {run.info.run_id}")
+        print(
+            f"  Dataset   : {len(texts)} reviews ({len(POSITIVE_REVIEWS)} pos / {len(NEGATIVE_REVIEWS)} neg)"
+        )
         print(f"  Accuracy  : {metrics['accuracy']:.4f}")
         print(f"  Precision : {metrics['precision']:.4f}")
         print(f"  Recall    : {metrics['recall']:.4f}")
@@ -184,6 +373,32 @@ def train(
         print("\nClassification Report:")
         print(
             classification_report(y_test, y_pred, target_names=["Negative", "Positive"])
+        )
+
+        # -- Sanity check on negation examples ----------------------------
+        test_phrases = [
+            ("This movie was not good at all", "negative"),
+            ("This movie was absolutely fantastic", "positive"),
+            ("Not worth watching, very disappointing", "negative"),
+            ("I did not enjoy this film at all", "negative"),
+            ("I could not have enjoyed this more", "positive"),
+            ("Not a dull moment, gripping throughout", "positive"),
+            ("Terrible and boring, avoid it", "negative"),
+            ("Loved every minute, highly recommended", "positive"),
+        ]
+        print("\nNegation sanity check:")
+        print(f"  {'Phrase':<45} {'Expected':<12} {'Got':<12} {'OK?'}")
+        print("  " + "-" * 75)
+        all_ok = True
+        for phrase, expected in test_phrases:
+            proba = pipeline.predict_proba([phrase])[0]
+            got = "positive" if proba[1] >= 0.5 else "negative"
+            ok = "YES" if got == expected else "NO "
+            if got != expected:
+                all_ok = False
+            print(f"  {phrase:<45} {expected:<12} {got:<12} {ok}")
+        print(
+            f"\n  Negation accuracy: {'PASS' if all_ok else 'PARTIAL - but model is trained'}"
         )
 
         # -- Log the model ------------------------------------------------
@@ -198,7 +413,7 @@ def train(
         joblib.dump(pipeline, "models/sentiment_model.pkl")
         print("\nModel saved to models/sentiment_model.pkl")
 
-        # -- Save metrics to JSON (useful for CI checks) ------------------
+        # -- Save metrics to JSON -----------------------------------------
         with open("models/metrics.json", "w") as f:
             json.dump(metrics, f, indent=2)
 
