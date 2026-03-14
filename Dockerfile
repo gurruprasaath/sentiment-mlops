@@ -7,9 +7,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source
+# Copy source (training data is embedded in train.py — no data/ folder needed)
 COPY train.py .
-COPY data/ ./data/
 
 # Train the model (logs stored in /app/mlruns, model in /app/models)
 RUN python train.py
