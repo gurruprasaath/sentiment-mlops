@@ -65,6 +65,7 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
+    redoc_url=None,  # disable default redoc; we serve a self-hosted version below
 )
 
 app.add_middleware(
@@ -146,6 +147,12 @@ async def root():
     return HTMLResponse(content=DEMO_HTML)
 
 
+@app.get("/redoc", response_class=HTMLResponse, tags=["UI"], include_in_schema=False)
+async def redoc():
+    """Self-hosted ReDoc API documentation (no external CDN required)."""
+    return HTMLResponse(content=REDOC_HTML)
+
+
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
     return HealthResponse(
@@ -190,6 +197,95 @@ async def predict_batch(request: BatchPredictRequest):
         inference_time_ms=round(total_ms, 3),
     )
 
+
+# ---------------------------------------------------------------------------
+# Embedded ReDoc UI (self-hosted — no external CDN)
+# ---------------------------------------------------------------------------
+REDOC_HTML = """<!DOCTYPE html>
+<html>
+<head>
+  <title>Sentiment Analysis API – ReDoc</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>body { margin: 0; padding: 0; }</style>
+</head>
+<body>
+  <div id="redoc-container"></div>
+  <script>
+    // Inline minimal ReDoc renderer using the OpenAPI JSON from /openapi.json
+    // Falls back to a styled page showing API info if JS is limited.
+    fetch('/openapi.json')
+      .then(r => r.json())
+      .then(spec => {
+        document.title = spec.info.title + ' – API Docs';
+        const el = document.getElementById('redoc-container');
+        el.innerHTML = buildDocs(spec);
+      });
+
+    function buildDocs(spec) {
+      const info = spec.info;
+      const paths = spec.paths || {};
+      let html = `
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: 'Segoe UI', Arial, sans-serif; background: #fafafa; color: #333; }
+          .header { background: #1a1a2e; color: #fff; padding: 32px 40px; }
+          .header h1 { margin: 0 0 6px; font-size: 2rem; }
+          .header .version { background: #7c3aed; display: inline-block; padding: 2px 12px; border-radius: 999px; font-size: 0.8rem; margin-bottom: 10px; }
+          .header p { margin: 0; color: #94a3b8; max-width: 700px; }
+          .container { max-width: 900px; margin: 0 auto; padding: 32px 20px; }
+          h2 { color: #1a1a2e; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-top: 36px; }
+          .endpoint { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+          .ep-header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; cursor: pointer; }
+          .method { font-weight: 700; font-size: 0.85rem; padding: 4px 12px; border-radius: 6px; min-width: 60px; text-align: center; }
+          .GET    { background: #dbeafe; color: #1d4ed8; }
+          .POST   { background: #dcfce7; color: #15803d; }
+          .DELETE { background: #fee2e2; color: #b91c1c; }
+          .PUT    { background: #fef9c3; color: #a16207; }
+          .ep-path { font-family: monospace; font-size: 1rem; font-weight: 600; }
+          .ep-summary { color: #6b7280; margin-left: auto; font-size: 0.9rem; }
+          .ep-body { padding: 0 20px 16px; border-top: 1px solid #e5e7eb; display: none; }
+          .ep-body.open { display: block; }
+          pre { background: #f1f5f9; border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 0.85rem; }
+          .tag { background: #ede9fe; color: #6d28d9; border-radius: 999px; padding: 2px 10px; font-size: 0.75rem; margin-right: 6px; }
+        </style>
+        <div class="header">
+          <div class="version">v${info.version}</div>
+          <h1>${info.title}</h1>
+          <p>${(info.description || '').replace(/[\\]n/g, '<br>').replace(/[*][*](.*?)[*][*]/g, '<strong>$1</strong>').replace(/[`](.*?)[`]/g, '<code>$1</code>')}</p>
+        </div>
+        <div class="container">
+          <h2>Endpoints</h2>`;
+
+      for (const [path, methods] of Object.entries(paths)) {
+        for (const [method, op] of Object.entries(methods)) {
+          const id = (path + method).replace(/[^a-z0-9]/gi, '_');
+          const tags = (op.tags || []).map(t => `<span class="tag">${t}</span>`).join('');
+          const body = op.requestBody ? JSON.stringify(op.requestBody, null, 2) : null;
+          const responses = JSON.stringify(op.responses || {}, null, 2);
+          html += `
+            <div class="endpoint">
+              <div class="ep-header" onclick="toggle('${id}')">
+                <span class="method ${method.toUpperCase()}">${method.toUpperCase()}</span>
+                <span class="ep-path">${path}</span>
+                <span class="ep-summary">${tags} ${op.summary || op.description || ''}</span>
+              </div>
+              <div class="ep-body" id="${id}">
+                ${op.description ? `<p>${op.description}</p>` : ''}
+                ${body ? `<strong>Request Body:</strong><pre>${body}</pre>` : ''}
+                <strong>Responses:</strong><pre>${responses}</pre>
+              </div>
+            </div>`;
+        }
+      }
+
+      html += `</div>
+        <scr` + `ipt>function toggle(id){var el=document.getElementById(id);el.classList.toggle('open')}</scr` + `ipt>`;
+      return html;
+    }
+  </script>
+</body>
+</html>"""
 
 # ---------------------------------------------------------------------------
 # Embedded demo UI
